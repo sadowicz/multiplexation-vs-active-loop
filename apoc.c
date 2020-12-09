@@ -11,6 +11,8 @@
 int getArgs(int argc, char** argv, int* controlFd, int** fds);
 int strToFd(char* str);
 
+int checkFds(int controlFd, int* fds, int fdQuantity);
+
 int main(int argc, char* argv[])
 {
 	int exitCode = EXIT_SUCCESS;
@@ -20,13 +22,17 @@ int main(int argc, char* argv[])
 
 		int controlFd;
 		int* fds;
+		int fdQuantity = argc - 3;
 
-		if(getArgs(argc, argv, &controlFd, &fds))
+		if(!(exitCode = (!getArgs(argc, argv, &controlFd, &fds))))
 		{
+			if(!(exitCode = (!checkFds(controlFd, fds, fdQuantity))))
+			{
+				
+			}
+
 			free(fds);
 		}
-		else
-			exitCode = EXIT_FAILURE;
 	}
 	else
 	{
@@ -97,3 +103,32 @@ int strToFd(char* str)
 	return res;
 }
 
+int checkFds(int controlFd, int* fds, int fdQuantity)
+{
+	int res = 1;
+	int correctFds = fdQuantity;
+
+	if(isPipe(controlFd) && isWriteOpened(controlFd))
+	{
+		for(int i = 0; i < fdQuantity; i++)
+		{
+			if(!isPipe(fds[i] || !isReadOpened(fds[i])))
+			{
+				correctFds--;
+				close(fds[i]);
+				fds[1] = -1;
+			}
+		}
+
+		if(!(res = (correctFds > 0)))
+			fprintf(stderr, "ERROR: checkFds: Not enough correct descriptors\n");
+
+	}
+	else
+	{
+		fprintf(stderr, "ERROR: checkFds: Control descriptor is not pipe or is not opened for write\n");
+		res = 0;
+	}
+
+	return res;
+}
