@@ -1,5 +1,10 @@
+#ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 2
+#endif
+
+#ifndef _XOPEN_SOURCE
 #define _XOPEN_SOURCE
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,9 +14,13 @@
 #include "utils.h"
 
 int getArgs(int argc, char** argv, int* controlFd, int** fds);
+int getEnvironment(double* d_wait, int* t_read, int* c_read);
 int strToFd(char* str);
 
 int checkFds(int controlFd, int* fds, int fdQuantity);
+int activeLoop(int controlFd, int* fds, int fdQuantity, double d_wait, int t_read, int c_read);
+
+int emptyFd(int controlFd, int fd, int bufSize);
 
 int main(int argc, char* argv[])
 {
@@ -26,10 +35,12 @@ int main(int argc, char* argv[])
 
 		if(!(exitCode = (!getArgs(argc, argv, &controlFd, &fds))))
 		{
-			if(!(exitCode = (!checkFds(controlFd, fds, fdQuantity))))
-			{
-				
-			}
+			double d_wait = 0.5;
+			int t_read = 3;
+			int c_read = 16;
+
+			if(!(exitCode = (!getEnvironment(&d_wait, &t_read, &c_read))))
+				exitCode = !activeLoop(controlFd, fds, fdQuantity, d_wait, t_read, c_read);
 
 			free(fds);
 		}
@@ -88,6 +99,43 @@ int getArgs(int argc, char** argv, int* controlFd, int** fds)
 	return res;
 }
 
+int getEnvironment(double* d_wait, int* t_read, int* c_read)
+{
+	int res = 1;
+
+	char* dwait = getenv("D_WAIT");
+	char* tread = getenv("T_READ");
+	char* cread = getenv("C_READ");
+
+	int errFlag = 0;
+
+	if(dwait)
+	{
+		*d_wait = strToDouble(dwait, &errFlag);
+		
+		if(!(res = (!errFlag)))
+			fprintf(stderr, "ERROR: getEnvironment: Unable to convert D_WAIT=%s to double number\n", dwait);
+	}
+	
+	if(res && tread)
+	{
+		*t_read = strToInt(tread, &errFlag);
+		
+		if(!(res = (!errFlag)))
+			fprintf(stderr, "ERROR: getEnvironment: Unable to convert T_READ=%s to int number\n", tread);
+	}
+
+	if(res && cread)
+	{
+		*c_read = strToInt(cread, &errFlag);
+		
+		if(!(res = (!errFlag)))
+			fprintf(stderr, "ERROR: getEnvironment: Unable to convert C_READ=%s to int number\n", cread);
+	}
+
+	return res;
+}
+
 int strToFd(char* str)
 {
 	int errFlag = 0;
@@ -129,6 +177,72 @@ int checkFds(int controlFd, int* fds, int fdQuantity)
 		fprintf(stderr, "ERROR: checkFds: Control descriptor is not pipe or is not opened for write\n");
 		res = 0;
 	}
+
+	return res;
+}
+
+int activeLoop(int controlFd, int* fds, int fdQuantity, double d_wait, int t_read, int c_read)
+{
+	int res = 1;
+
+	while(checkFds(controlFd, fds, fdQuantity))
+	{
+
+		int readsRemaining = t_read;
+
+		for(int i = 0; i < fdQuantity; i++)
+		{
+			if(fds[i] == -1) continue;
+
+			if(isPipeFull(fds[i]))
+			{
+				if((res = (emptyFd(controlFd, fds[i], c_read))))
+					readsRemaining--;
+				else
+					break;
+			}
+			
+			if(!readsRemaining) break;
+		}
+
+		if(!(res = hibernate(d_wait * DECY_UNIT)))
+			break;
+	}
+
+	return res;
+}
+
+int emptyFd(int controlFd, int fd, int bufSize)
+{
+	int res = 1;
+
+	char* buffer = (char*)malloc((size_t)bufSize);
+	if((res = (buffer != NULL)))
+	{
+		int isFirstRead = 1;
+		
+		while(!isPipeEmpty(fd))
+		{
+			if(!(res = (read(fd, buffer, bufSize) != -1)))
+			{
+				fprintf(stderr, "ERROR: emptyFd: Unable to read from pipe\n");
+				break;
+			}
+
+			if(isFirstRead)
+			{
+				if(!(res = (write(fd, buffer, 4) != -1)))
+				{
+					fprintf(stderr, "ERROR: emptyFd: Unable to write to control pipe\n");
+					break;
+				}
+				
+				isFirstRead = 0;
+			}
+		}
+	}
+	else
+		fprintf(stderr, "ERROR: emptyFd: Unable to allocate buffer for pipe reading\n");
 
 	return res;
 }
